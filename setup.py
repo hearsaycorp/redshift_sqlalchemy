@@ -10,9 +10,9 @@ class PyTest(TestCommand):
         sys.exit(errno)
 
 setup(
-    name='redshift-sqlalchemy',
-    version="0.6.1a",
-    description='Amazon Redshift Dialect for sqlalchemy',
+    name='hearsay-redshift-sqlalchemy',
+    version="0.7.0",
+    description='Amazon Redshift Dialect for sqlalchemy (fork)',
     long_description=open("README.rst").read(),
     author='Matt George',
     author_email='mgeorge@gmail.com',
@@ -40,4 +40,3 @@ setup(
         ]
     }
 )
-

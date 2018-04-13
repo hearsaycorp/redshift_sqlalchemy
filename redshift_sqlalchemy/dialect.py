@@ -181,7 +181,7 @@ class RedshiftDialect(PGDialect_psycopg2):
 
     def _get_column_info(self, name, format_type, default,
                          notnull, domains, enums, schema):
-        column_info = super(RedshiftDialect, self)._get_column_info(name, format_type, default, notnull, domains, enums, schema)
+        column_info = super(RedshiftDialect, self)._get_column_info(name, format_type, default, notnull, domains, enums, schema, comment=None)
         if isinstance(column_info['type'], VARCHAR) and column_info['type'].length is None:
             column_info['type'] = NullType()
         return column_info
