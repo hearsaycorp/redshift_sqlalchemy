@@ -1,10 +1,11 @@
+import logging
 from sqlalchemy import schema, util, exc
 from sqlalchemy.dialects.postgresql.base import PGDDLCompiler
 from sqlalchemy.dialects.postgresql.psycopg2 import PGDialect_psycopg2
 from sqlalchemy.engine import reflection
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.sql.expression import BindParameter, Executable, ClauseElement
-from sqlalchemy.types import VARCHAR, NullType
+from sqlalchemy.types import VARCHAR, NullType, BigInteger, Integer
 
 
 class RedShiftDDLCompiler(PGDDLCompiler):
@@ -49,14 +50,6 @@ class RedShiftDDLCompiler(PGDDLCompiler):
                       )
 
     '''
-
-    def visit_create_table(self, create, if_not_exists=False):
-        result = super(RedShiftDDLCompiler, self).visit_create_table(create)
-        return result if not if_not_exists else result.replace("CREATE TABLE", "CREATE TABLE IF NOT EXISTS")
-
-    def visit_create_schema(self, create, if_not_exists=False):
-        result = super(RedShiftDDLCompiler, self).visit_create_schema(create)
-        return result if not if_not_exists else result.replace("CREATE SCHEMA", "CREATE SCHEMA IF NOT EXISTS")
 
     def post_create_table(self, table):
         text = ""
@@ -181,7 +174,9 @@ class RedshiftDialect(PGDialect_psycopg2):
 
     def _get_column_info(self, name, format_type, default,
                          notnull, domains, enums, schema):
-        column_info = super(RedshiftDialect, self)._get_column_info(name, format_type, default, notnull, domains, enums, schema, comment=None)
+        column_info = super(RedshiftDialect, self)._get_column_info(name, format_type, default,
+                                                                    notnull, domains,
+                                                                    enums, schema, comment=None)
         if isinstance(column_info['type'], VARCHAR) and column_info['type'].length is None:
             column_info['type'] = NullType()
         return column_info
@@ -251,39 +246,32 @@ def visit_unload_from_select(element, compiler, **kw):
 class CopyCommand(Executable, ClauseElement):
     ''' Prepares a RedShift COPY statement
     '''
-    def __init__(self, schema_name, table_name, data_location, access_key, secret_key, session_token='', options={}, columns_list=[]):
+    def __init__(self, schema_name, table_name, data_location, access_key, secret_key, session_token='', options={}):
         ''' Initializes a CopyCommand instance
 
         Args:
             self: An instance of CopyCommand
-            schema_name   - Schema associated with the table_name
-            table_name    - The table to copy the data into
-            data_location - The Amazon S3 location or DynamoDB location from where to copy
-                            or a manifest file if 'manifest' option is used
-            access_key    - AWS Access Key (required)
-            secret_key    - AWS Secret Key (required)
+            schema_name - Schema associated with the table_name
+            table_name: The table to copy the data into
+            data_location The Amazon S3 location from where to copy - or a manifest file if 'manifest' option is used
+            access_key - AWS Access Key (required)
+            secret_key - AWS Secret Key (required)
             session_token - AWS STS Session Token (optional)
-            columns_list  - Optional: the relevant columns of table <table_name>
-            options       - Set of optional parameters to modify the COPY sql
-                json             - Boolean value denoting whether source data is in json format (does not apply to DynamoDB data sources)
-                truncate_columns - Boolean value denoting whether to truncate columns (vs. fail) on overflow; defaults to True
-                quote_character  - Character used for quoting in CSV; defaults to double-quote (")
-                delimiter        - File delimiter; defaults to ','
-                ignore_header    - Integer value of number of lines to skip at the start of each file
-                null             - Optional string value denoting what to interpret as a NULL value from the file
-                gzip             - Boolean value denoting whether input data is gzipped (.gz); defaults to False
-                escape           - Boolean value denoting whether the backslash is treated as escape character; defaults to False
-                remove_quotes    - Boolean value denoting whether to remove surrounding quotation; defaults to False
-                manifest         - Boolean value denoting whether data_location is a manifest file; defaults to False
-                empty_as_null    - Boolean value denoting whether to load VARCHAR fields with
-                                   empty values as NULL instead of empty string; defaults to True
-                blanks_as_null   - Boolean value denoting whether to load VARCHAR fields with
-                                   whitespace only values as NULL instead of whitespace; defaults to True
-                readratio        - (only for copying from DynamoDB) specifies readratio 0..200, defaults to 175 (= 80%)
+            options - Set of optional parameters to modify the COPY sql
+                delimiter - File delimiter; defaults to ','
+                ignore_header - Integer value of number of lines to skip at the start of each file
+                null - Optional string value denoting what to interpret as a NULL value from the file
+                gzip - Boolean value denoting whether input data is gzipped (.gz); defaults to False
+                escape - Boolean value denoting whether the backslash is treated as escape character; defaults to False
+                remove_quotes - Boolean value denoting whether to remove surrounding quotation; defaults to False
+                manifest - Boolean value denoting whether data_location is a manifest file; defaults to False
+                empty_as_null - Boolean value denoting whether to load VARCHAR fields with
+                                empty values as NULL instead of empty string; defaults to True
+                blanks_as_null - Boolean value denoting whether to load VARCHAR fields with
+                                 whitespace only values as NULL instead of whitespace; defaults to True
         '''
         self.schema_name = schema_name
         self.table_name = table_name
-        self.columns_list = columns_list
         self.data_location = data_location
         self.access_key = access_key
         self.secret_key = secret_key
@@ -295,72 +283,44 @@ class CopyCommand(Executable, ClauseElement):
 def visit_copy_command(element, compiler, **kw):
     ''' Returns the actual sql query for the CopyCommand class
     '''
-
-    json = bool(element.options.get("json", False))
-
-    if element.data_location.startswith('dynamodb://'):
-        datasource_options = \
-            """
-                READRATIO %(readratio)s
-            """ % \
-            {'readratio':  element.options.get('readratio', 175)}
-    else:
-        if json:
-            datasource_options = \
-                """
-                    JSON 'auto'
-                """
-        else:
-            datasource_options = \
-                """
-                    CSV QUOTE AS '%(quote_character)s'
-                    DELIMITER '%(delimiter)s'
-                    IGNOREHEADER %(ignore_header)s
-                    %(null)s
-                    %(gzip)s
-                    %(escape)s
-                    %(remove_quotes)s
-                """ % \
-                {'quote_character': element.options.get('quote_character', '"'),
-                 'delimiter': element.options.get('delimiter', ','),
-                 'ignore_header': element.options.get('ignore_header', 0),
-                 'manifest': 'MANIFEST' if bool(element.options.get('manifest', False)) else '',
-                 'null': ("NULL '%s'" % element.options.get('null')) if element.options.get('null') else '',
-                 'gzip': 'GZIP' if bool(element.options.get('gzip', False)) else '',
-                 'escape': 'ESCAPE' if bool(element.options.get('escape', False)) else '',
-                 'remove_quotes': 'REMOVEQUOTES' if bool(element.options.get('remove_quotes', False)) else ''}
-
-    return """
-               COPY %(schema_name)s.%(table_name)s %(columns_string)s
-               FROM '%(data_location)s'
-               CREDENTIALS 'aws_access_key_id=%(access_key)s;aws_secret_access_key=%(secret_key)s%(session_token)s'
-               %(truncatecolumns)s
-               %(empty_as_null)s
-               %(blanks_as_null)s
-               %(datasource_options)s
-               ;
+    opts = element.options
+    #"TRUNCATECOLUMNS EMPTYASNULL BLANKSASNULL DELIMITER ',' IGNOREHEADER 0 ;").strip()
+    session_token = element.session_token
+    copy_cmd_str = """
+           COPY %(schema_name)s.%(table_name)s FROM '%(data_location)s'
+           CREDENTIALS 'aws_access_key_id=%(access_key)s;aws_secret_access_key=%(secret_key)s%(session_token)s'
+           CSV
+           TRUNCATECOLUMNS
+           %(empty_as_null)s
+           %(blanks_as_null)s
+           DELIMITER '%(delimiter)s'
+           IGNOREHEADER %(ignore_header)s
+           %(null)s
+           %(gzip)s
+           %(escape)s
+           %(remove_quotes)s
+           %(manifest)s;
            """ % \
-           {'columns_string': ('('+ ', '.join(element.columns_list) + ')') if element.columns_list else '',
-            'schema_name': element.schema_name,
+           {'schema_name': element.schema_name,
             'table_name': element.table_name,
             'data_location': element.data_location,
             'access_key': element.access_key,
             'secret_key': element.secret_key,
-            'session_token': ';token=%s' % element.session_token if element.session_token else '',
-            'truncatecolumns': 'TRUNCATECOLUMNS' if bool(element.options.get('truncate_columns', True)) and not json else '',
-            'empty_as_null': 'EMPTYASNULL' if bool(element.options.get('empty_as_null', True)) and not json else '',
-            'blanks_as_null': 'BLANKSASNULL' if bool(element.options.get('blanks_as_null', True)) and not json else '',
-            'datasource_options': datasource_options}
+            'session_token': ';token=%s' % session_token if session_token else '',
+            'null': ("NULL '%s'" % opts.get('null')) if opts.get('null') else '',
+            'delimiter': opts.get('delimiter', ','),
+            'ignore_header': opts.get('ignore_header', 0),
+            'gzip': 'GZIP' if opts.get('gzip', False) else '',
+            'escape': 'ESCAPE' if opts.get('escape', False) else '',
+            'remove_quotes': 'REMOVEQUOTES' if opts.get('remove_quotes', False) else '',
+            'manifest': 'MANIFEST' if opts.get('manifest', False) else '',
+            'empty_as_null': 'EMPTYASNULL' if opts.get('empty_as_null', True) else '',
+            'blanks_as_null': 'BLANKSASNULL' if opts.get('blanks_as_null', True) else ''}
+    return copy_cmd_str
 
 
 @compiles(BindParameter)
 def visit_bindparam(bindparam, compiler, **kw):
     #print bindparam
     res = compiler.visit_bindparam(bindparam, **kw)
-    if 'unload_select' in kw:
-        #process param and return
-        res = res.replace("'", "\\'")
-        res = res.replace('%', '%%')
-        return res
-    else:
-        return res
+    return res.replace("'", "\\'").replace('%', '%%') if 'unload_select' in kw else res
