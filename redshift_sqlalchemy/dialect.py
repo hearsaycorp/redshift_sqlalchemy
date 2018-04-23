@@ -174,7 +174,9 @@ class RedshiftDialect(PGDialect_psycopg2):
 
     def _get_column_info(self, name, format_type, default,
                          notnull, domains, enums, schema):
-        column_info = super(RedshiftDialect, self)._get_column_info(name, format_type, default, notnull, domains, enums, schema)
+        column_info = super(RedshiftDialect, self)._get_column_info(name, format_type, default,
+                                                                    notnull, domains,
+                                                                    enums, schema, comment=None)
         if isinstance(column_info['type'], VARCHAR) and column_info['type'].length is None:
             column_info['type'] = NullType()
         return column_info
@@ -281,48 +283,44 @@ class CopyCommand(Executable, ClauseElement):
 def visit_copy_command(element, compiler, **kw):
     ''' Returns the actual sql query for the CopyCommand class
     '''
-    cqd1 = """
+    opts = element.options
+    #"TRUNCATECOLUMNS EMPTYASNULL BLANKSASNULL DELIMITER ',' IGNOREHEADER 0 ;").strip()
+    session_token = element.session_token
+    copy_cmd_str = """
            COPY %(schema_name)s.%(table_name)s FROM '%(data_location)s'
            CREDENTIALS 'aws_access_key_id=%(access_key)s;aws_secret_access_key=%(secret_key)s%(session_token)s'
            CSV
            TRUNCATECOLUMNS
+           %(empty_as_null)s
+           %(blanks_as_null)s
            DELIMITER '%(delimiter)s'
            IGNOREHEADER %(ignore_header)s
            %(null)s
            %(gzip)s
            %(escape)s
            %(remove_quotes)s
-           %(manifest)s
-           %(empty_as_null)s
-           %(blanks_as_null)s;
+           %(manifest)s;
            """ % \
            {'schema_name': element.schema_name,
             'table_name': element.table_name,
             'data_location': element.data_location,
             'access_key': element.access_key,
             'secret_key': element.secret_key,
-            'session_token': ';token=%s' % element.session_token if element.session_token else '',
-            'null': ("NULL '%s'" % element.options.get('null')) if element.options.get('null') else '',
-            'delimiter': element.options.get('delimiter', ','),
-            'ignore_header': element.options.get('ignore_header', 0),
-            'gzip': 'GZIP' if bool(element.options.get('gzip', False)) else '',
-            'escape': 'ESCAPE' if bool(element.options.get('escape', False)) else '',
-            'remove_quotes': 'REMOVEQUOTES' if bool(element.options.get('remove_quotes', False)) else '',
-            'manifest': 'MANIFEST' if bool(element.options.get('manifest', False)) else '',
-            'empty_as_null': 'EMPTYASNULL' if bool(element.options.get('empty_as_null', True)) else '',
-            'blanks_as_null': 'BLANKSASNULL' if bool(element.options.get('blanks_as_null', True)) else ''}
-    logging.error("SQL CMD: %s",cqd1)
-    return cqd1
+            'session_token': ';token=%s' % session_token if session_token else '',
+            'null': ("NULL '%s'" % opts.get('null')) if opts.get('null') else '',
+            'delimiter': opts.get('delimiter', ','),
+            'ignore_header': opts.get('ignore_header', 0),
+            'gzip': 'GZIP' if opts.get('gzip', False) else '',
+            'escape': 'ESCAPE' if opts.get('escape', False) else '',
+            'remove_quotes': 'REMOVEQUOTES' if opts.get('remove_quotes', False) else '',
+            'manifest': 'MANIFEST' if opts.get('manifest', False) else '',
+            'empty_as_null': 'EMPTYASNULL' if opts.get('empty_as_null', True) else '',
+            'blanks_as_null': 'BLANKSASNULL' if opts.get('blanks_as_null', True) else ''}
+    return copy_cmd_str
 
 
 @compiles(BindParameter)
 def visit_bindparam(bindparam, compiler, **kw):
     #print bindparam
     res = compiler.visit_bindparam(bindparam, **kw)
-    if 'unload_select' in kw:
-        #process param and return
-        res = res.replace("'", "\\'")
-        res = res.replace('%', '%%')
-        return res
-    else:
-        return res
+    return res.replace("'", "\\'").replace('%', '%%') if 'unload_select' in kw else res

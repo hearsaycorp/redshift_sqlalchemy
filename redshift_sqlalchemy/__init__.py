@@ -1,4 +1,4 @@
-__version__ = '0.6.1a'
+__version__ = '0.8.0'
 
 from sqlalchemy.dialects import registry
 
