@@ -11,7 +11,7 @@ class PyTest(TestCommand):
 
 setup(
     name='hearsay-redshift-sqlalchemy',
-    version="0.7.0",
+    version="0.7.1",
     description='Amazon Redshift Dialect for sqlalchemy (fork)',
     long_description=open("README.rst").read(),
     author='Matt George',
